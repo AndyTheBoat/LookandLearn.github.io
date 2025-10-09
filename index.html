@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>look_to_learn_math_break_voice_10</title>
   <style>
-    :root {
-      --brand-yellow:#F6C21F; --brand-blue:#2F66CC; --brand-white:#FFFFFF; --brand-dark:#101828;
-      --panel:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --border:#334155; --ok:#22c55e; --bad:#ef4444;
-    }
+    :root { --brand-yellow:#F6C21F; --brand-blue:#2F66CC; --brand-white:#FFFFFF; --brand-dark:#101828;
+      --panel:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --border:#334155; --ok:#22c55e; --bad:#ef4444; }
     body{margin:0;font-family:"SF Pro Rounded","Segoe UI",Roboto,Helvetica,Arial,system-ui,-apple-system;
       background:linear-gradient(0deg,#fff 0%,rgba(246,194,31,.13) 100%);color:var(--brand-dark);}
     .container{max-width:1120px;margin:0 auto;padding:0 16px;}
@@ -75,7 +73,7 @@
   </header>
 
   <main class="container">
-    <!-- microphone approval card -->
+    <!-- Microphone Access -->
     <section class="card" style="margin-top:16px;">
       <div class="card-head">Microphone Access</div>
       <div class="card-body" style="grid-template-columns:1fr auto;">
@@ -87,7 +85,7 @@
       </div>
     </section>
 
-    <!-- player + quiz overlay -->
+    <!-- Player + Overlay -->
     <section id="playerSection">
       <div id="playerWrap">
         <div id="player"></div>
@@ -125,7 +123,7 @@
       </div>
     </section>
 
-    <!-- controls -->
+    <!-- Controls -->
     <section class="card" style="margin-top:16px;">
       <div class="card-head">Quiz Controls</div>
       <div class="card-body">
@@ -154,7 +152,7 @@
       </div>
     </section>
 
-    <!-- channel -->
+    <!-- Channel -->
     <section style="margin-top:24px;">
       <div class="search-row">
         <h2 style="color:var(--brand-blue);">Your Kids Channel</h2>
@@ -170,24 +168,36 @@
   <footer><div class="container">© 2025 Look to Learn • Privacy • Terms</div></footer>
   <div id="terminatedBanner">Program terminated. Refresh the page to restart.</div>
 
-  <!-- YouTube API -->
+  <!-- YouTube IFrame API -->
   <script>(function(){const s=document.createElement('script');s.src="https://www.youtube.com/iframe_api";document.head.appendChild(s);})();</script>
 
-  <!-- === Core logic (shortened for clarity) === -->
+  <!-- ===== Application Script (complete) ===== -->
   <script>
-  /* --- helpers, quiz, mic, terminate, etc. --- (identical to the previous version I gave you) */
-  /* ... full working script from previous message here ... */
-  </script>
+  // ---------- Constants & State ----------
+  let player=null, pauseTimer=null, quizEnabled=true, appTerminated=false;
+  let intervalMs = 10*1000;
+  const minA=1,maxA=4,minB=1,maxB=10;
+  let currentAnswer=null,aNow=null,bNow=null,wasFullscreenBeforeBreak=false;
 
-  <!-- === Insert version badge === -->
-  <script>
+  const MIC_GRANTED_KEY='look2learn_mic_granted';
+
+  // Waveform
+  let audioCtx=null, analyser=null, dataArray=null, micStream=null, rafId=null;
+  const waveWrap = document.getElementById('waveWrap');
+  const waveCanvas = document.getElementById('waveCanvas');
+  const wctx = waveCanvas.getContext('2d');
+
+  // DOM helpers
+  const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+
+  // Version badge
   function insertVersionBadge(){
     const ul=document.querySelector('header nav ul'); if(!ul) return;
     const sources=[location.pathname,location.href,document.title];
     let idx=null;
     for(const s of sources){
-      const m=s&&s.match(/look[_-]?to[_-]?learn[_-]?math[_-]?break[_-]?voice[_-]?(\d+)/i);
-      if(m&&m[1]){idx=m[1];break;}
+      const m=s && s.match(/look[_-]?to[_-]?learn[_-]?math[_-]?break[_-]?voice[_-]?(\d+)/i);
+      if(m&&m[1]){ idx=m[1]; break; }
     }
     if(!idx) return;
     const li=document.createElement('li');
@@ -195,8 +205,313 @@
     li.textContent=`Index ${idx}`;
     ul.insertBefore(li,ul.firstElementChild||null);
   }
-  document.addEventListener('DOMContentLoaded',insertVersionBadge);
+
+  // YouTube API hook
+  function onYouTubeIframeAPIReady(){ window._ytReady=true; }
+  window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+
+  function ensurePlayer(videoId){
+    if (appTerminated) return;
+    $('#playerSection').style.display='block';
+    if(!player){
+      player=new YT.Player('player',{
+        height:'390', width:'640', videoId:videoId||'',
+        playerVars:{rel:0,modestbranding:1,enablejsapi:1,playsinline:1},
+        events:{ onReady:()=>resetTimer() }
+      });
+    } else {
+      player.loadVideoById(videoId);
+      resetTimer();
+    }
+  }
+
+  // ---------- Fullscreen ----------
+  function isFullscreen(){return !!document.fullscreenElement;}
+  function exitFullscreenIfNeeded(){return document.fullscreenElement?document.exitFullscreen().catch(()=>{}):Promise.resolve();}
+  function requestFullscreenSafely(){
+    try{
+      const ifr=player?.getIframe?.();
+      if(ifr?.requestFullscreen) return ifr.requestFullscreen();
+      const w=document.getElementById('playerWrap'); if(w?.requestFullscreen) return w.requestFullscreen();
+    }catch(_){}
+    return Promise.resolve();
+  }
+  document.addEventListener('fullscreenchange',()=>{ if(!document.fullscreenElement && quizEnabled) resetTimer(); });
+
+  // ---------- Quiz ----------
+  function randInt(a,b){return Math.floor(Math.random()*(b-a+1))+a;}
+  function newQuestion(){
+    aNow=randInt(minA,maxA); bNow=randInt(minB,maxB);
+    currentAnswer=aNow*bNow;
+    $('#q').textContent=`${aNow} × ${bNow} = ?`;
+    $('#ans').value=''; $('#status').textContent=''; $('#heard').textContent='';
+    clearDebugAlts(); setDebugNorm('—');
+  }
+  function showOverlay(){ $('#overlay').style.display='grid'; }
+  function hideOverlay(){ $('#overlay').style.display='none'; }
+
+  async function triggerBreak(){
+    if(!quizEnabled || appTerminated) return;
+    wasFullscreenBeforeBreak=isFullscreen();
+    const doBreak=async()=>{
+      try{player?.pauseVideo();}catch{}
+      showOverlay(); newQuestion();
+      const ok=await canAutoStartMic();
+      if(ok) autoStartMic();
+      else { $('#heard').textContent='Tap 🎤 Start and click Allow to use voice.'; setTimeout(()=>$('#heard').textContent='',3000); }
+    };
+    if(wasFullscreenBeforeBreak){exitFullscreenIfNeeded().then(doBreak).catch(doBreak);} else doBreak();
+  }
+
+  function resetTimer(){
+    if(pauseTimer) clearTimeout(pauseTimer);
+    if(!quizEnabled || appTerminated) return;
+    pauseTimer=setTimeout(triggerBreak, intervalMs);
+  }
+
+  function rearmListening(){
+    if (appTerminated) return;
+    setTimeout(()=>{ if ($('#overlay').style.display !== 'none') autoStartMic(); }, 400);
+  }
+
+  function handleAnswer(val, heardText){
+    if (appTerminated) return;
+    stopMic(); // avoid double captures
+    if(val===currentAnswer){
+      $('#status').textContent=`Correct! ${aNow} × ${bNow} = ${currentAnswer}`;
+      $('#status').style.color='var(--ok)';
+      setTimeout(()=>{ if (appTerminated) return;
+        hideOverlay(); try{player?.playVideo();}catch{};
+        if(wasFullscreenBeforeBreak){requestFullscreenSafely().finally(()=>resetTimer());} else resetTimer();
+      },2000);
+    } else {
+      if(heardText) $('#heard').textContent=`Heard: "${heardText}"`;
+      $('#status').textContent='Try again.'; $('#status').style.color='var(--bad)';
+      rearmListening();
+      setTimeout(()=>{ $('#status').textContent=''; $('#heard').textContent=''; },1600);
+    }
+  }
+
+  // Buttons (typed answer)
+  $('#submit').addEventListener('click',()=>{const v=parseInt($('#ans').value,10); if(!isNaN(v)) handleAnswer(v,null); else rearmListening();});
+  $('#ans').addEventListener('keydown',e=>{ if(e.key==='Enter'){ const v=parseInt(e.target.value,10); if(!isNaN(v)) handleAnswer(v,null); else rearmListening(); }});
+
+  // Controls
+  $('#applyBtn').addEventListener('click',()=>{
+    const raw=parseInt($('#interval').value,10);
+    const unit=$('#intervalUnit').value;
+    const n=Math.max(1,isNaN(raw)?10:raw);
+    intervalMs=(unit==='minutes')? n*60*1000 : n*1000;
+    resetTimer();
+  });
+  $('#quizToggle').addEventListener('click',e=>{
+    const on=e.currentTarget.getAttribute('data-on')==='true';
+    if(on){ e.currentTarget.textContent='Off'; e.currentTarget.classList.remove('primary'); e.currentTarget.classList.add('secondary'); }
+    else  { e.currentTarget.textContent='On';  e.currentTarget.classList.remove('secondary'); e.currentTarget.classList.add('primary'); }
+    e.currentTarget.setAttribute('data-on',(!on).toString());
+    quizEnabled=!on; if(quizEnabled) resetTimer(); else if(pauseTimer) clearTimeout(pauseTimer);
+  });
+  $('#searchBox').addEventListener('input',e=>{
+    const q=e.target.value.toLowerCase().trim();
+    $$('#videoGrid .vcard').forEach(card=>{
+      const t=card.querySelector('.vbody > div')?.textContent?.toLowerCase()||'';
+      card.style.display=t.includes(q)?'':'none';
+    });
+  });
+  $$('#videoGrid .vcard').forEach(card=>{
+    card.addEventListener('click',()=>{
+      if (appTerminated) return;
+      const vid=card.getAttribute('data-video');
+      if(!vid){ alert('This card has no data-video id set.'); return; }
+      if(!window._ytReady||!window.YT?.Player){ alert('YouTube API still loading. Try again.'); return; }
+      ensurePlayer(vid);
+    });
+  });
+
+  // ---------- Mic permission ----------
+  const prefetchBtn=$('#prefetchMic'), prefetchStatus=$('#prefetchStatus');
+  async function prefetchMicOnce(){
+    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      stream.getTracks().forEach(t=>t.stop());
+      localStorage.setItem(MIC_GRANTED_KEY,'1'); prefetchStatus.textContent='Microphone enabled for this site.';
+      setTimeout(()=>prefetchStatus.textContent='',2500);
+    } catch(e){
+      prefetchStatus.textContent='Microphone not enabled. Please click Allow in the popup.';
+      setTimeout(()=>prefetchStatus.textContent='',3500);
+    }
+  }
+  prefetchBtn?.addEventListener('click',prefetchMicOnce);
+  if(location.protocol==='file:'){prefetchStatus.textContent='Tip: run via http://localhost so your browser can remember mic permission.';}
+
+  async function canAutoStartMic(){
+    if(navigator.permissions?.query){
+      try{const p=await navigator.permissions.query({name:'microphone'}); $('#dbgPerm').textContent=p.state; return p.state==='granted';}
+      catch(_){}
+    }
+    return localStorage.getItem(MIC_GRANTED_KEY)==='1';
+  }
+
+  // ---------- Speech recognition + Waveform ----------
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition||null;
+  const micBtn=$('#micBtn');
+  let rec=null, listening=false;
+
+  function normalizeText(t){return t.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu,' ').replace(/\s+/g,' ').trim();}
+  const MAP=(function(){
+    const en={"zero":0,"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12,"thirteen":13,"fourteen":14,"fifteen":15,"sixteen":16,"seventeen":17,"eighteen":18,"nineteen":19,"twenty":20,"twenty one":21,"twenty-two":22,"twenty two":22,"twenty-three":23,"twenty three":23,"twenty-four":24,"twenty four":24,"twenty-five":25,"twenty five":25,"twenty-six":26,"twenty six":26,"twenty-seven":27,"twenty seven":27,"twenty-eight":28,"twenty eight":28,"twenty-nine":29,"twenty nine":29,"thirty":30,"thirty-one":31,"thirty one":31,"thirty-two":32,"thirty two":32,"thirty-three":33,"thirty three":33,"thirty-four":34,"thirty four":34,"thirty-five":35,"thirty five":35,"thirty-six":36,"thirty six":36,"thirty-seven":37,"thirty seven":37,"thirty-eight":38,"thirty eight":38,"thirty-nine":39,"thirty nine":39,"forty":40};
+    const it={"zero":0,"uno":1,"due":2,"tre":3,"quattro":4,"cinque":5,"sei":6,"sette":7,"otto":8,"nove":9,"dieci":10,"undici":11,"dodici":12,"tredici":13,"quattordici":14,"quindici":15,"sedici":16,"diciassette":17,"diciotto":18,"diciannove":19,"venti":20,"ventuno":21,"ventidue":22,"ventitre":23,"ventitré":23,"ventiquattro":24,"venticinque":25,"ventisei":26,"ventisette":27,"ventotto":28,"ventinove":29,"trenta":30,"trentuno":31,"trentadue":32,"trentatre":33,"trentatré":33,"trentaquattro":34,"trentacinque":35,"trentasei":36,"trentasette":37,"trentotto":38,"trentanove":39,"quaranta":40};
+    const de={"null":0,"eins":1,"ein":1,"zwei":2,"drei":3,"vier":4,"fünf":5,"funf":5,"sechs":6,"sieben":7,"acht":8,"neun":9,"zehn":10,"elf":11,"zwölf":12,"zwolf":12,"dreizehn":13,"vierzehn":14,"fünfzehn":15,"funfzehn":15,"sechzehn":16,"siebzehn":17,"achtzehn":18,"neunzehn":19,"zwanzig":20,"einundzwanzig":21,"zweiundzwanzig":22,"dreiundzwanzig":23,"vierundzwanzig":24,"fünfundzwanzig":25,"funfundzwanzig":25,"sechsundzwanzig":26,"siebenundzwanzig":27,"achtundzwanzig":28,"neunundzwanzig":29,"dreißig":30,"dreissig":30,"einunddreißig":31,"einunddreissig":31,"zweiunddreißig":32,"zweiunddreissig":32,"dreiunddreißig":33,"vierunddreißig":34,"fünfunddreißig":35,"funfunddreissig":35,"sechsunddreißig":36,"siebenunddreißig":37,"achtunddreißig":38,"neununddreißig":39,"vierzig":40};
+    return {en,it,de};
+  })();
+
+  // Debug elems
+  const dbgPanel = document.getElementById('micDebug');
+  const dbgPerm  = document.getElementById('dbgPerm');
+  const dbgLang  = document.getElementById('dbgLang');
+  const dbgRms   = document.getElementById('dbgRms');
+  const dbgAlts  = document.getElementById('dbgAlts');
+  const dbgNorm  = document.getElementById('dbgNorm');
+  const dbgErr   = document.getElementById('dbgErr');
+
+  function showDebug(){ dbgPanel.style.display='block'; }
+  function hideDebug(){ dbgPanel.style.display='none'; }
+  function clearDebugAlts(){ dbgAlts.innerHTML=''; }
+  function pushDebugAlt(text, conf){
+    const li=document.createElement('li');
+    li.textContent = `"${text}"  (conf: ${(conf!=null? conf.toFixed(2) : '—')})`;
+    dbgAlts.appendChild(li);
+  }
+  function setDebugNorm(s){ dbgNorm.textContent=s; }
+  function setDebugError(s){ dbgErr.textContent = s || '—'; }
+
+  function parseSpokenNumber(text){
+    const digits=text.match(/\d+/); if(digits) return {num:parseInt(digits[0],10), norm:normalizeText(text)};
+    const norm = normalizeText(text);
+    const num =
+      (MAP.de[norm] != null) ? MAP.de[norm] :
+      (MAP.en[norm] != null) ? MAP.en[norm] :
+      (MAP.it[norm] != null) ? MAP.it[norm] : NaN;
+    return {num, norm};
+  }
+
+  function ensureRecognizer(){
+    if(!SR) return null;
+    if(!rec){
+      rec=new SR();
+      rec.lang='de-DE'; // Force German only
+      rec.interimResults=false; rec.maxAlternatives=5;
+      rec.onresult=ev=>{
+        if (appTerminated) return;
+        clearDebugAlts();
+        let heardAll=[];
+        for(const res of ev.results){
+          for(const alt of res){
+            heardAll.push({t:alt.transcript.trim(), c:typeof alt.confidence==='number'?alt.confidence:null});
+          }
+        }
+        heardAll.slice(0,5).forEach(a=>pushDebugAlt(a.t,a.c));
+        const top = heardAll[0]?.t || '';
+        $('#heard').textContent = `Heard: "${top}"`;
+        const {num, norm} = parseSpokenNumber(top);
+        setDebugNorm(norm || '—');
+        if(!isNaN(num)) handleAnswer(num, top); else handleAnswer(NaN, top);
+      };
+      rec.onerror=e=>{
+        if (appTerminated) return;
+        setDebugError((e.error||'unknown')+(e.message?(' · '+e.message):''));
+        // Auto-restart on errors (except permission)
+        if (['not-allowed','service-not-allowed'].includes(e.error)) return;
+        rearmListening();
+      };
+      rec.onend=()=>{ 
+        if (appTerminated) return;
+        listening=false; micBtn.textContent='🎤 Start'; micBtn.classList.remove('on'); stopWaveform();
+        if ($('#overlay').style.display !== 'none') rearmListening();
+      };
+    }
+    return rec;
+  }
+
+  function startWaveform(stream){
+    try{
+      waveWrap.style.display='flex'; showDebug();
+      if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser(); analyser.fftSize=2048;
+      source.connect(analyser);
+      const N = analyser.fftSize;
+      dataArray = new Uint8Array(N);
+
+      (function draw(){
+        if (appTerminated) return;
+        rafId = requestAnimationFrame(draw);
+        analyser.getByteTimeDomainData(dataArray);
+
+        let sum=0;
+        for(let i=0;i<N;i++){ const s=(dataArray[i]-128)/128; sum += s*s; }
+        const rms = Math.sqrt(sum/N);
+        dbgRms.textContent = (rms||0).toFixed(2);
+
+        const cw=waveCanvas.width, ch=waveCanvas.height, center=ch/2, amp=3;
+        wctx.clearRect(0,0,cw,ch);
+        wctx.lineWidth=2; wctx.strokeStyle='#e2e8f0';
+        wctx.beginPath();
+        const slice = cw / N; let x=0;
+        for(let i=0;i<N;i++){
+          const sample=(dataArray[i]-128)/128;
+          let y=center + sample*center*amp; if(y<0) y=0; if(y>ch) y=ch;
+          if(i===0) wctx.moveTo(x,y); else wctx.lineTo(x,y);
+          x+=slice;
+        }
+        wctx.lineTo(cw,center); wctx.stroke();
+      })();
+    }catch(e){ waveWrap.style.display='none'; }
+  }
+  function stopWaveform(){
+    try{ if(rafId) cancelAnimationFrame(rafId); }catch(_){}
+    rafId=null; waveWrap.style.display='none'; wctx.clearRect(0,0,waveCanvas.width,waveCanvas.height); hideDebug();
+  }
+
+  async function startMic(){
+    if (appTerminated) return;
+    const r=ensureRecognizer();
+    if(!r){ $('#heard').textContent='Speech recognition not available. Use Chrome/Edge via http://localhost'; return; }
+    try{ const p = await navigator.permissions?.query?.({name:'microphone'}); if(p) $('#dbgPerm').textContent = p.state; }catch(_){}
+    try{ micStream = await navigator.mediaDevices.getUserMedia({audio:true}); startWaveform(micStream); }
+    catch(e){ waveWrap.style.display='none'; }
+    if(!listening){
+      try{ r.lang='de-DE'; $('#dbgLang').textContent=r.lang; r.start(); listening=true; micBtn.textContent='🛑 Stop'; micBtn.classList.add('on'); }
+      catch(e){ $('#heard').textContent='Could not start mic: '+e; setDebugError(String(e)); showDebug(); }
+    }
+  }
+  function stopMic(){
+    try{ if(rec && listening){ rec.stop(); } }catch(_){}
+    listening=false; micBtn.textContent='🎤 Start'; micBtn.classList.remove('on');
+    if(micStream){ try{micStream.getTracks().forEach(t=>t.stop());}catch(_){} micStream=null; }
+    stopWaveform();
+  }
+  function autoStartMic(){ startMic(); }
+  document.getElementById('micBtn').addEventListener('click',()=>{ if(listening) stopMic(); else startMic(); });
+
+  // Terminate
+  document.getElementById('terminateBtn').addEventListener('click', ()=>{
+    appTerminated = true;
+    quizEnabled = false;
+    try{ if(pauseTimer) clearTimeout(pauseTimer); }catch(_){}
+    try{ player?.pauseVideo?.(); }catch(_){}
+    stopMic();
+    $('#overlay').style.display='none';
+    $('#playerSection').style.display='none';
+    document.querySelectorAll('button, input, select').forEach(el=>{ el.disabled = true; });
+    document.getElementById('terminatedBanner').style.display='flex';
+  });
+
+  // Start flow hooks & utilities
+  document.addEventListener('DOMContentLoaded', ()=>{
+    $('#dbgLang').textContent = 'de-DE';
+    insertVersionBadge();
+  });
+  document.addEventListener('keydown', (e)=>{ if(e.key==='d' || e.key==='D'){ const p=document.getElementById('micDebug'); p.style.display = (p.style.display==='none' || !p.style.display) ? 'block':'none'; } });
   </script>
 </body>
 </html>
-
