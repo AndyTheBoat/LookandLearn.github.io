@@ -1,4 +1,4 @@
-# Look and Learn — public reviewer demo
+# Stop and Learn — public reviewer demo
 
 Children choose what to watch. Parents choose what to practise.
 
