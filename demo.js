@@ -12,6 +12,13 @@ el('sample').addEventListener('click',()=>{el('video-url').value='https://www.yo
 el('ask').addEventListener('click',askQuestion);
 el('answer-form').addEventListener('submit',event=>{event.preventDefault();if(!pendingQuestion)return;const value=el('answer').value.trim().toLowerCase();if(!value)return;answered++;const ok=value===currentQuestion[1];if(ok)correct++;el('feedback').textContent=ok?'Correct. You can continue the video.':`The sample answer is ${currentQuestion[1]}. You can continue the video.`;el('answer-form').hidden=true;updateScore();});
 el('resume').addEventListener('click',()=>{clearQuestion();if(player)player.playVideo();});
-el('reset').addEventListener('click',()=>{answered=correct=index=0;clearQuestion();updateScore();el('player-status').textContent='Temporary question progress cleared.';});
+el('reset').addEventListener('click',()=>{answered=correct=index=0;clearQuestion();el('answer').value='';currentQuestion=null;updateScore();el('player-status').textContent='Temporary question progress cleared.';});
 el('question-set').addEventListener('change',()=>{index=0;clearQuestion();});el('interval').addEventListener('change',()=>{played=0;lastTime=null;});
 setInterval(()=>{if(!player||typeof player.getPlayerState!=='function'||pendingQuestion||player.getPlayerState()!==YT.PlayerState.PLAYING){lastTime=null;return;}const now=player.getCurrentTime();if(lastTime!==null){const delta=now-lastTime;if(delta>0&&delta<2)played+=delta;}lastTime=now;const seconds=Number(el('interval').value);if(seconds>0&&played>=seconds)askQuestion();},500);
+
+// Agreement is session-only; no cookies, consent identifiers or stored answers.
+const gatedControls=['question-set','interval','video-url','sample'];
+function gateDemo(){const agreed=el('embed-consent').checked;gatedControls.forEach(id=>{el(id).disabled=!agreed;});el('video-form').querySelector('button[type=submit]').disabled=!agreed;if(!agreed){el('ask').disabled=true;if(player||apiPromise){generation++;if(player)player.destroy();location.reload();}}}
+el('embed-consent').addEventListener('change',gateDemo);
+el('withdraw').addEventListener('click',()=>{generation++;if(player)player.destroy();location.reload();});
+el('embed-consent').checked=false;gateDemo();
