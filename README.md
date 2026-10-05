@@ -2,7 +2,7 @@
 
 Children choose what to watch. Parents choose what to practise.
 
-Live demo: https://andytheboat.github.io/LookandLearn.github.io/
+Live demo: https://andytheboat.github.io/StopandLearn.github.io/
 
 This account-free, non-commercial proof of concept demonstrates independent parent-selected sample questions around embedded YouTube playback. No real customers, search.list integration, microphone or persistent learning history. The questions are not based on video content.
 
